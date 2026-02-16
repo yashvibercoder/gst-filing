@@ -1,0 +1,55 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.Python
+ENV/
+env/
+
+# Data files (large, user-specific)
+Input files/
+Template files/
+output/
+
+# Audit working files
+audit/templates/
+audit/output/
+audit/reports/
+
+# Portal backend
+portal/backend/data/
+portal/backend/venv/
+*.db
+
+# Portal frontend
+portal/frontend/node_modules/
+portal/frontend/dist/
+
+# Environment
+.env
+.env.local
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+~$*
+
+# Logs
+*.log
+logs/
+
+# Temp
+nul

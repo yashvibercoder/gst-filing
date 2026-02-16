@@ -1,0 +1,797 @@
+# MASTER_PLAN.md — GST Filing Portal + Existing Pipeline Integration
+
+## The Big Picture
+
+We have TWO systems that must coexist:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│   SYSTEM A: Existing CLI Pipeline (KEEP AS-IS)                  │
+│   ─────────────────────────────────────────────                  │
+│   Purpose: Generate CSVs for manual GST portal upload           │
+│            + Backtesting against previous month's templates      │
+│   Entry:   python main.py                                       │
+│   Output:  output/{state}/*.csv                                 │
+│   Status:  Phase 6 COMPLETE, Phase 7 bugs identified            │
+│                                                                  │
+│   You keep using this for:                                       │
+│   • Backtesting with audit/run_audit.py                         │
+│   • Manual filing fallback (if API has issues)                  │
+│   • Validating that portal produces identical output             │
+│                                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   SYSTEM B: New Web Portal (BUILD NEW)                          │
+│   ─────────────────────────────────────                          │
+│   Purpose: End-to-end automated filing via GSP API              │
+│   Entry:   localhost:3000 (React UI) + localhost:8000 (API)     │
+│   Output:  Filed returns with ARNs                              │
+│   Status:  TO BE BUILT                                          │
+│                                                                  │
+│   This handles:                                                  │
+│   • File upload via browser                                     │
+│   • Processing (reuses System A's modules)                      │
+│   • Bug fixes (dedup, PoS, precision) in new layer              │
+│   • CSV → JSON conversion                                       │
+│   • GSP API filing                                              │
+│   • OTP automation                                              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### How They Connect:
+
+```
+GST Project/
+├── main.py                    ← System A entry (UNTOUCHED)
+├── readers/                   ← SHARED — both systems use these
+├── processors/                ← SHARED — both systems use these
+├── generators/                ← SHARED — both systems use these
+├── validators/                ← System A only (CLI validation)
+├── audit/                     ← System A only (backtesting)
+├── output/                    ← System A output (CSVs for manual upload)
+│
+├── portal/                    ← System B (ENTIRELY NEW)
+│   ├── backend/               ← FastAPI server
+│   ├── frontend/              ← React UI
+│   └── mcp_agent/             ← OTP automation
+│
+├── config.json                ← SHARED config
+├── PROJECT_MEMORY.md          ← Reference doc (UPDATED)
+└── MASTER_PLAN.md             ← This file
+```
+
+### The Golden Rule:
+**System A's files are NEVER modified by portal development.**
+Portal imports from readers/, processors/, generators/ as READ-ONLY.
+All bug fixes and enhancements live in portal/backend/services/.
+
+---
+
+## Current State (from PROJECT_MEMORY.md)
+
+### What Exists and Works:
+```
+readers/
+├── base_reader.py              ✅ Abstract base class
+├── flipkart_reader.py          ✅ 1 file, 5 sheets
+├── amazon_reader.py            ✅ 14 files, 6 sheets each
+├── meesho_reader.py            ✅ 1 file, sheet "80307"
+└── einvoice_reader.py          ✅ Dynamic multi-file
+
+processors/
+├── hsn_cleaner.py              ✅ Clean HSN codes
+├── rate_normalizer.py          ✅ Decimal → integer rates
+└── state_detector.py           ✅ Detect 14 states, create folders
+
+generators/
+├── hsn_generator.py            ✅ hsn(b2b).csv + hsn(b2c).csv
+├── gstr_b2b_gen.py             ✅ b2b,sez,de.csv
+├── gstr_b2cs_gen.py            ✅ b2cs.csv
+├── creditnotes_gen.py          ✅ cdnr1.csv
+├── documents_gen.py            ✅ docs.csv
+└── eco_gen.py                  ✅ eco.csv
+
+validators/
+└── output_validator.py         ✅ 7 checks, last run: 148 PASS
+
+audit/
+└── run_audit.py                ✅ 10 checks, standalone
+```
+
+### Known Bugs (from Delhi Audit):
+```
+CRITICAL:
+  1. B2B & CDNR duplicate invoices (Amazon + E-Invoice overlap)
+  2. Place Of Supply format inconsistency (XX-Name vs XX - Name)
+
+MEDIUM:
+  3. HSN B2C floating point precision (31445.659999999993)
+
+LOW:
+  4. Docs incomplete (only Flipkart series, missing Amazon/E-Invoice)
+  5. ECO incomplete (only Flipkart TCS)
+
+MINOR:
+  6. UQC short codes (PCS) vs long codes (PCS-PIECE)
+```
+
+---
+
+## What You Should Do — Step by Step
+
+### STEP 1: Freeze System A (Do This NOW)
+```
+Before we touch anything:
+
+1. Create a git branch or make a backup:
+   Copy entire "GST Project" folder → "GST Project BACKUP Phase6"
+
+2. Run System A one final time:
+   python main.py
+   python audit/run_audit.py
+
+3. Save the audit report — this is your BASELINE
+   The portal must produce output that matches or improves on this.
+
+4. System A is now FROZEN:
+   - main.py, readers/, processors/, generators/ = DO NOT EDIT
+   - validators/, audit/ = DO NOT EDIT
+   - You can still run them anytime for comparison
+```
+
+### STEP 2: Make Existing Modules Importable (Small Change)
+```
+Add __init__.py files so portal can import existing modules:
+
+readers/__init__.py           ← NEW (empty or with exports)
+processors/__init__.py        ← NEW (empty or with exports)
+generators/__init__.py        ← NEW (empty or with exports)
+utils/__init__.py             ← Already exists
+
+This does NOT change System A's behavior.
+main.py still works exactly as before.
+But now portal can do: from readers.flipkart_reader import FlipkartReader
+```
+
+### STEP 3: Build the Portal (The Main Work)
+
+Details in the phased plan below.
+
+### STEP 4: Backtesting Strategy
+```
+After portal generates output, compare against System A:
+
+   System A output (output/07-Delhi/*.csv)
+        ↕ compare
+   Portal output (portal/backend/data/processed/07_Delhi/*.csv)
+
+   If they match → Portal is correct, System A validates it
+   If portal has MORE data → Bug fix working (e.g., dedup removed dupes)
+   If portal has LESS data → Something broke, investigate
+
+   Also compare portal output against previous month's template:
+   Use audit/run_audit.py with portal's output → should get FEWER failures
+```
+
+---
+
+## Portal Architecture (Detailed)
+
+### Directory Structure:
+
+```
+GST Project/
+│
+│── [EXISTING - UNTOUCHED]
+├── main.py
+├── config.json
+├── readers/
+│   ├── __init__.py                    ← NEW (add for importability)
+│   ├── base_reader.py
+│   ├── flipkart_reader.py
+│   ├── amazon_reader.py
+│   ├── meesho_reader.py
+│   └── einvoice_reader.py
+├── processors/
+│   ├── __init__.py                    ← NEW
+│   ├── hsn_cleaner.py
+│   ├── rate_normalizer.py
+│   └── state_detector.py
+├── generators/
+│   ├── __init__.py                    ← NEW
+│   ├── hsn_generator.py
+│   ├── gstr_b2b_gen.py
+│   ├── gstr_b2cs_gen.py
+│   ├── creditnotes_gen.py
+│   ├── documents_gen.py
+│   └── eco_gen.py
+├── validators/
+│   └── output_validator.py
+├── audit/
+│   ├── run_audit.py
+│   ├── templates/
+│   ├── output/
+│   └── reports/
+├── utils/
+│   └── file_discovery.py
+├── output/                            # System A output
+├── Input files/
+├── Template files/
+│
+│── [NEW - PORTAL]
+├── portal/
+│   │
+│   ├── backend/
+│   │   ├── main.py                    # FastAPI entry point
+│   │   ├── requirements.txt
+│   │   ├── .env                       # Secrets (git-ignored)
+│   │   ├── .env.example               # Template for .env
+│   │   │
+│   │   ├── app/
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py              # All settings, loads .env + config.json
+│   │   │   ├── database.py            # SQLAlchemy setup
+│   │   │   ├── security.py            # Encryption for stored credentials
+│   │   │   │
+│   │   │   ├── models/                # Database tables
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── gstin.py
+│   │   │   │   ├── filing_session.py
+│   │   │   │   ├── upload_log.py
+│   │   │   │   └── filing_history.py
+│   │   │   │
+│   │   │   ├── schemas/               # Pydantic API schemas
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── gstin.py
+│   │   │   │   ├── filing.py
+│   │   │   │   ├── upload.py
+│   │   │   │   └── dashboard.py
+│   │   │   │
+│   │   │   ├── api/                   # REST endpoints
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── router.py          # Aggregates all routes
+│   │   │   │   ├── gstins.py          # /api/gstins/*
+│   │   │   │   ├── upload.py          # /api/upload/*
+│   │   │   │   ├── process.py         # /api/process/*
+│   │   │   │   ├── convert.py         # /api/convert/*
+│   │   │   │   ├── gsp.py             # /api/gsp/*
+│   │   │   │   ├── filing.py          # /api/filing/*
+│   │   │   │   ├── dashboard.py       # /api/dashboard/*
+│   │   │   │   └── ws.py              # WebSocket for live progress
+│   │   │   │
+│   │   │   ├── services/              # Business logic
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── file_detector.py   # Auto-detect uploaded files
+│   │   │   │   ├── processing_bridge.py  # ⭐ Calls existing readers/processors/generators
+│   │   │   │   ├── bug_fixes.py       # ⭐ Dedup, PoS fix, precision fix, UQC map
+│   │   │   │   ├── json_converter.py  # ⭐ CSV → GSTN JSON (all 7 templates)
+│   │   │   │   ├── gsp_client.py      # GSP API HTTP client
+│   │   │   │   ├── filing_orchestrator.py  # Batch filing workflow
+│   │   │   │   ├── otp_service.py     # OTP management + MCP bridge
+│   │   │   │   └── comparison.py      # Compare portal output vs System A
+│   │   │   │
+│   │   │   ├── gstn_schemas/          # GSTN JSON structure definitions
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── b2b.py
+│   │   │   │   ├── b2cs.py
+│   │   │   │   ├── hsn.py
+│   │   │   │   ├── cdnr.py
+│   │   │   │   ├── doc_issue.py
+│   │   │   │   └── validators.py
+│   │   │   │
+│   │   │   └── utils/
+│   │   │       ├── __init__.py
+│   │   │       ├── state_codes.py
+│   │   │       ├── gstin_parser.py
+│   │   │       └── logger.py
+│   │   │
+│   │   ├── data/                      # Portal's own data directory
+│   │   │   ├── uploads/               # Raw files uploaded via UI
+│   │   │   ├── processed/             # Portal's processed CSVs (post bug-fix)
+│   │   │   ├── json_output/           # GSTN JSON files per state
+│   │   │   └── db/
+│   │   │       └── portal.db          # SQLite database
+│   │   │
+│   │   └── tests/
+│   │       ├── test_bug_fixes.py
+│   │       ├── test_json_converter.py
+│   │       └── test_comparison.py
+│   │
+│   ├── frontend/
+│   │   ├── package.json
+│   │   ├── vite.config.ts
+│   │   ├── tailwind.config.ts
+│   │   ├── tsconfig.json
+│   │   ├── index.html
+│   │   │
+│   │   └── src/
+│   │       ├── main.tsx
+│   │       ├── App.tsx
+│   │       ├── index.css
+│   │       │
+│   │       ├── components/
+│   │       │   ├── ui/                # shadcn/ui primitives
+│   │       │   ├── layout/
+│   │       │   │   ├── Sidebar.tsx
+│   │       │   │   ├── Header.tsx
+│   │       │   │   └── Layout.tsx
+│   │       │   ├── dashboard/
+│   │       │   │   ├── StatCards.tsx
+│   │       │   │   ├── StateTable.tsx
+│   │       │   │   ├── ApiStatusBanner.tsx
+│   │       │   │   ├── DeadlineTimer.tsx
+│   │       │   │   └── TaxChart.tsx
+│   │       │   ├── gstins/
+│   │       │   │   ├── GstinGrid.tsx
+│   │       │   │   ├── GstinForm.tsx
+│   │       │   │   └── ApiChecklist.tsx
+│   │       │   ├── upload/
+│   │       │   │   ├── Dropzone.tsx
+│   │       │   │   ├── FileList.tsx
+│   │       │   │   └── ProcessResults.tsx
+│   │       │   ├── review/
+│   │       │   │   ├── StateSelector.tsx
+│   │       │   │   ├── SectionTabs.tsx
+│   │       │   │   ├── DataPreview.tsx
+│   │       │   │   ├── JsonViewer.tsx
+│   │       │   │   └── ComparisonPanel.tsx
+│   │       │   ├── filing/
+│   │       │   │   ├── FilingWizard.tsx
+│   │       │   │   ├── AuthStep.tsx
+│   │       │   │   ├── UploadStep.tsx
+│   │       │   │   ├── ReviewStep.tsx
+│   │       │   │   ├── FileStep.tsx
+│   │       │   │   ├── OtpInput.tsx
+│   │       │   │   └── ArnDisplay.tsx
+│   │       │   └── history/
+│   │       │       ├── HistoryTable.tsx
+│   │       │       └── FilingDetail.tsx
+│   │       │
+│   │       ├── pages/
+│   │       │   ├── Dashboard.tsx
+│   │       │   ├── Gstins.tsx
+│   │       │   ├── Upload.tsx
+│   │       │   ├── Review.tsx
+│   │       │   ├── Filing.tsx
+│   │       │   ├── History.tsx
+│   │       │   └── Settings.tsx
+│   │       │
+│   │       ├── hooks/
+│   │       │   ├── useGstins.ts
+│   │       │   ├── useUpload.ts
+│   │       │   ├── useFiling.ts
+│   │       │   └── useWebSocket.ts
+│   │       │
+│   │       └── lib/
+│   │           ├── api.ts             # HTTP client to backend
+│   │           ├── types.ts           # TypeScript interfaces
+│   │           ├── constants.ts       # State codes, etc
+│   │           └── utils.ts           # Formatters, helpers
+│   │
+│   └── mcp_agent/
+│       ├── requirements.txt
+│       ├── server.py                  # MCP server entry
+│       ├── imap_monitor.py            # Email IMAP poller
+│       └── otp_extractor.py           # Regex OTP extraction
+│
+│── [DOCUMENTATION]
+├── docs/
+│   ├── MASTER_PLAN.md                 # This file
+│   ├── REQUIREMENTS.md                # Full requirements
+│   ├── PROJECT_STRUCTURE.md           # Codebase layout
+│   ├── DEVELOPMENT_PLAN.md            # Phased build plan
+│   ├── GSP_API_GUIDE.md              # API integration walkthrough
+│   └── PROJECT_MEMORY.md             # Updated project memory
+│
+└── venv/                              # Python virtual environment
+```
+
+---
+
+## The Bridge: How Portal Calls Existing Code
+
+### The Key File: `portal/backend/app/services/processing_bridge.py`
+
+This is the glue between System A and System B:
+
+```python
+"""
+processing_bridge.py — Calls existing readers/processors/generators
+WITHOUT modifying them. Applies bug fixes on the output.
+
+Flow:
+  1. Import existing modules from project root
+  2. Run them against uploaded files
+  3. Capture their CSV output
+  4. Run bug_fixes.py on the output
+  5. Store fixed CSVs in portal/backend/data/processed/
+"""
+
+import sys
+import os
+
+# Add project root to Python path so we can import existing modules
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                             '..', '..', '..', '..'))
+sys.path.insert(0, PROJECT_ROOT)
+
+# Now we can import existing modules
+from readers.flipkart_reader import FlipkartReader
+from readers.amazon_reader import AmazonReader
+from readers.einvoice_reader import EInvoiceReader
+from readers.meesho_reader import MeeshoReader
+from processors.state_detector import StateDetector
+from processors.hsn_cleaner import HsnCleaner
+from processors.rate_normalizer import RateNormalizer
+from generators.hsn_generator import HsnGenerator
+from generators.gstr_b2b_gen import B2BGenerator
+from generators.gstr_b2cs_gen import B2CSGenerator
+from generators.creditnotes_gen import CreditNotesGenerator
+from generators.documents_gen import DocumentsGenerator
+from generators.eco_gen import EcoGenerator
+
+class ProcessingBridge:
+    """
+    Orchestrates the existing pipeline modules.
+    Equivalent to main.py but callable from the web portal.
+    """
+
+    def __init__(self, config: dict, input_dir: str, output_dir: str):
+        self.config = config
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+
+    def run_full_pipeline(self) -> dict:
+        """
+        Runs the complete processing pipeline.
+        Returns: { state_code: { template: row_count } }
+        """
+        # Phase 1: Read all files
+        # Phase 2: Process (clean HSN, normalize rates, detect states)
+        # Phase 3: Generate 7 CSVs per state
+        # Phase 4: Return summary
+
+    def run_for_state(self, state_code: str) -> dict:
+        """Run pipeline for a single state only."""
+```
+
+### The Bug Fix Layer: `portal/backend/app/services/bug_fixes.py`
+
+```python
+"""
+bug_fixes.py — Post-processing fixes applied AFTER generators run.
+These fix known issues from the Delhi Audit without modifying System A.
+
+Fixes applied:
+  1. B2B/CDNR deduplication (keep E-Invoice version, drop Amazon duplicate)
+  2. Place Of Supply normalization (strip spaces: "XX - Name" → "XX-Name")
+  3. HSN B2C floating point precision (round to 2 decimal places)
+  4. UQC long code mapping (PCS → PCS-PIECES, OTH → OTH-OTHERS)
+  5. Documents completion (derive series from B2B + CDNR data)
+"""
+
+class BugFixer:
+    def fix_all(self, state_dir: str) -> FixReport:
+        """Apply all fixes to CSVs in a state directory."""
+        report = FixReport()
+        report += self.fix_b2b_dedup(state_dir)
+        report += self.fix_cdnr_dedup(state_dir)
+        report += self.fix_pos_format(state_dir)
+        report += self.fix_hsn_precision(state_dir)
+        report += self.fix_uqc_codes(state_dir)
+        report += self.fix_docs_completion(state_dir)
+        return report
+
+    def fix_b2b_dedup(self, state_dir: str) -> FixResult:
+        """
+        Deduplicate B2B invoices.
+        Same Invoice Number from Amazon + E-Invoice = keep E-Invoice
+        (E-Invoice has Receiver Name, Amazon doesn't)
+        """
+
+    def fix_pos_format(self, state_dir: str) -> FixResult:
+        """
+        Normalize Place Of Supply:
+        "23 - Madhya Pradesh" → "23-Madhya Pradesh"
+        Applied to: b2b,sez,de.csv, cdnr1.csv
+        """
+
+    def fix_hsn_precision(self, state_dir: str) -> FixResult:
+        """
+        Round all numeric columns to 2 decimal places.
+        Applied to: hsn(b2c).csv
+        Fixes: 31445.659999999993 → 31445.66
+        """
+
+    def fix_uqc_codes(self, state_dir: str) -> FixResult:
+        """
+        Map short UQC codes to GSTN long format:
+        PCS → PCS-PIECES, OTH → OTH-OTHERS, UNT → UNT-UNITS
+        KGS → KGS-KILOGRAMS, MTR → MTR-METERS, LTR → LTR-LITRES
+        Applied to: hsn(b2b).csv, hsn(b2c).csv
+        """
+
+    def fix_docs_completion(self, state_dir: str) -> FixResult:
+        """
+        Derive document series from B2B + CDNR data.
+        Extract min/max invoice numbers per prefix (FABBQS, IN-, KNYT-)
+        Count per series.
+        Applied to: docs.csv
+        """
+```
+
+---
+
+## Data Flow — Complete End-to-End
+
+```
+USER OPENS PORTAL (localhost:3000)
+    │
+    ▼
+PAGE: Upload & Process
+    │  User drags Flipkart, Amazon, E-Invoice Excel files
+    │
+    ▼
+BACKEND: /api/upload/files
+    │  Files saved to portal/backend/data/uploads/
+    │  file_detector.py auto-identifies platform + state
+    │
+    ▼
+BACKEND: /api/process/run
+    │  processing_bridge.py calls existing readers → processors → generators
+    │  CSVs written to portal/backend/data/processed/{state}/
+    │  bug_fixes.py runs on each state's CSVs (dedup, PoS, precision, UQC)
+    │  Fixed CSVs overwrite originals in portal's data dir
+    │
+    │  Optional: comparison.py diffs portal output vs System A output
+    │
+    ▼
+PAGE: Review Data
+    │  User sees per-state tables, record counts, data preview
+    │  Can compare portal output vs System A output side-by-side
+    │  Can spot-check individual invoices
+    │
+    ▼
+BACKEND: /api/convert/to-json
+    │  json_converter.py reads fixed CSVs → builds GSTN JSON per state
+    │  Validates against GSTN schema
+    │  JSON saved to portal/backend/data/json_output/{state}/
+    │
+    ▼
+PAGE: Review JSON
+    │  User previews JSON, sees validation results
+    │  Can download JSON (fallback for manual portal upload)
+    │
+    ▼
+PAGE: Filing Center
+    │
+    ├── Step 1: Authenticate
+    │   Backend calls GSP → Request OTP per GSTIN
+    │   MCP agent captures OTP from email
+    │   Backend verifies OTP → gets session tokens
+    │
+    ├── Step 2: Upload to Portal
+    │   Backend pushes JSON to GSTN via GSP API per GSTIN
+    │   Real-time progress via WebSocket
+    │
+    ├── Step 3: Review Summaries
+    │   Backend fetches portal summaries
+    │   Compares with local data
+    │   Shows mismatches (if any)
+    │
+    └── Step 4: File
+        Backend requests EVC OTPs
+        MCP agent captures
+        Backend files returns
+        ARNs displayed ✅
+
+    │
+    ▼
+PAGE: Dashboard
+    │  Shows all 14 states: Filed ✅ / Ready 🟡 / Error 🔴
+    │  Filing history, ARNs, deadline countdown
+```
+
+---
+
+## Development Phases
+
+### Phase 0: Preparation (30 min)
+```
+□ Backup entire GST Project folder
+□ Run main.py + audit one final time → save baseline
+□ Add __init__.py to readers/, processors/, generators/
+□ Verify System A still works: python main.py
+□ Create portal/ directory skeleton
+□ Move doc files to docs/ folder
+```
+
+### Phase 1: Backend Foundation (Session 1-2)
+```
+□ FastAPI app scaffold
+□ SQLAlchemy models + SQLite database
+□ AES encryption for credential storage
+□ GSTIN CRUD API endpoints
+□ Config loading (reads existing config.json + new .env)
+□ Test: Swagger UI at localhost:8000/docs
+```
+
+### Phase 2: Frontend Shell (Session 3-4)
+```
+□ React + Vite + TypeScript setup
+□ Tailwind CSS + shadcn/ui components
+□ Layout: Sidebar + Header + main area
+□ Dashboard page (stat cards, state table, deadline timer)
+□ GSTIN management page (cards, add/edit modal)
+□ API access checklist sheet
+□ Dark mode support
+□ Test: Beautiful dashboard at localhost:3000
+```
+
+### Phase 3: Upload + Processing + Bug Fixes (Session 5-6)
+```
+□ File upload endpoint + drag-and-drop UI
+□ file_detector.py (auto-detect platform/state)
+□ processing_bridge.py (wraps existing modules)
+□ bug_fixes.py (all 6 fixes from Delhi audit)
+□ Processing progress via WebSocket
+□ Processing results table in UI
+□ comparison.py (portal vs System A diff)
+□ Test: Upload files → process → see fixed output
+```
+
+### Phase 4: JSON Conversion + Review (Session 7-8)
+```
+□ GSTN JSON schema definitions (Pydantic)
+□ json_converter.py (all 7 CSV → JSON mappings)
+□ JSON validation against schemas
+□ Review page: state selector, section tabs, data tables
+□ JSON preview panel
+□ Download JSON button (manual upload fallback)
+□ Comparison panel (portal output vs System A)
+□ Test: Generate valid GSTN JSON from processed CSVs
+```
+
+### Phase 5: GSP API Integration (Session 9-10)
+```
+□ gsp_client.py (Sandbox.co.in HTTP client)
+□ Authentication flow (request OTP → verify → session)
+□ Save GSTR-1 data endpoint
+□ Upload status checking
+□ Summary fetching
+□ Submit + File endpoints
+□ Error handling + retry logic
+□ Test: File on sandbox with test GSTIN
+```
+
+### Phase 6: Filing Center UI (Session 11-12)
+```
+□ 4-step wizard: Auth → Upload → Review → File
+□ Per-GSTIN progress tracking (WebSocket)
+□ OTP input component (manual entry)
+□ Batch operations (all 14 states)
+□ Filing complete screen with ARNs
+□ Test: Full filing flow on sandbox
+```
+
+### Phase 7: MCP OTP Agent (Session 13)
+```
+□ IMAP email monitor
+□ OTP regex extraction
+□ MCP server with tools
+□ Portal ↔ MCP bridge
+□ Auto-fill OTP in filing wizard
+□ Test: OTP captured and auto-filled
+```
+
+### Phase 8: History, Reports, Polish (Session 14)
+```
+□ Filing history page
+□ Export to Excel
+□ Month-over-month charts
+□ Mobile responsive polish
+□ Error message improvements
+□ Performance optimization
+```
+
+---
+
+## Backtesting Strategy
+
+### How to Validate Portal Output Against System A:
+
+```
+STEP 1: Run System A
+  python main.py
+  → output/07-Delhi/b2b,sez,de.csv (274 rows, has duplicates)
+
+STEP 2: Run Portal processing
+  Upload same files via portal UI → click Process
+  → portal/backend/data/processed/07_Delhi/b2b,sez,de.csv (154 rows, deduped)
+
+STEP 3: Compare
+  Portal UI shows comparison:
+  ┌──────────────┬──────────┬──────────┬──────────┐
+  │ Template     │ System A │ Portal   │ Diff     │
+  ├──────────────┼──────────┼──────────┼──────────┤
+  │ B2B          │ 274 rows │ 154 rows │ -120 ✅  │ ← duplicates removed
+  │ B2CS         │ 78 rows  │ 78 rows  │ 0        │
+  │ HSN B2B      │ 88 rows  │ 88 rows  │ 0        │
+  │ HSN B2C      │ 125 rows │ 125 rows │ 0        │ ← but values rounded
+  │ CDNR         │ 34 rows  │ 19 rows  │ -15 ✅   │ ← duplicates removed
+  │ Docs         │ 1 row    │ 3 rows   │ +2 ✅    │ ← derived series added
+  │ ECO          │ 1 row    │ 1 row    │ 0        │
+  └──────────────┴──────────┴──────────┴──────────┘
+
+  ✅ = Portal is BETTER (bug fix working)
+
+STEP 4: Validate with Audit Tool
+  Copy portal output → audit/output/
+  python audit/run_audit.py
+  → Should show FEWER failures than System A's audit
+  → Specifically: duplicates check should PASS now
+```
+
+### Monthly Backtesting Workflow:
+```
+1. Upload files to portal
+2. Click "Process"
+3. Portal shows comparison with System A automatically
+4. Review differences — they should all be improvements
+5. If something looks wrong, you still have System A output as fallback
+6. Once satisfied, proceed to filing
+```
+
+---
+
+## Running Both Systems
+
+### System A (CLI — for backtesting/manual filing):
+```bash
+cd "C:\Users\swapn\OneDrive\Desktop\VS\Claude projects\GST Project"
+python main.py                    # Process data → output CSVs
+python audit/run_audit.py         # Backtest against templates
+```
+
+### System B (Portal — for automated filing):
+```bash
+# Terminal 1: Backend
+cd portal/backend
+python -m uvicorn main:app --reload --port 8000
+
+# Terminal 2: Frontend
+cd portal/frontend
+npm run dev                        # Starts on localhost:5173
+
+# Terminal 3: MCP Agent (when needed)
+cd portal/mcp_agent
+python server.py
+```
+
+### Accessing:
+```
+Portal UI:        http://localhost:5173
+Backend API:      http://localhost:8000
+API Docs:         http://localhost:8000/docs
+```
+
+---
+
+## Summary: What Goes Where
+
+| Task | System A (CLI) | System B (Portal) |
+|------|:-:|:-:|
+| Read Flipkart/Amazon/E-Invoice | ✅ (readers/) | ✅ (via bridge) |
+| Process data | ✅ (processors/) | ✅ (via bridge) |
+| Generate CSVs | ✅ (generators/) | ✅ (via bridge) |
+| Fix bugs (dedup, PoS, etc) | ❌ | ✅ (bug_fixes.py) |
+| Validate output | ✅ (validators/) | ✅ (inherits) |
+| Backtest audit | ✅ (audit/) | ✅ (comparison.py) |
+| Convert to JSON | ❌ | ✅ (json_converter.py) |
+| Upload to GST portal | ❌ (manual) | ✅ (GSP API) |
+| File returns | ❌ (manual) | ✅ (GSP API) |
+| OTP management | ❌ (manual) | ✅ (MCP agent) |
+| Beautiful UI | ❌ | ✅ |
+| View filing history | ❌ | ✅ |

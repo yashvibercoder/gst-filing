@@ -1,0 +1,181 @@
+{
+    "project": {
+        "name": "GST Automation",
+        "month": "January",
+        "year": "2026",
+        "month_short": "Jan",
+        "gstin": "A3SZBDZ05A1P39"
+    },
+
+    "paths": {
+        "input_folder": "Input files",
+        "output_folder": "output",
+        "template_folder": "Template files",
+        "log_folder": "logs"
+    },
+
+    "file_patterns": {
+        "flipkart": "*Flipkart*.xlsx",
+        "amazon": "*A3SZBDZ05A1P39*.xlsx",
+        "meesho": "*Meesho*.xlsx",
+        "einvoice": "*EINV*.xlsx",
+        "offline_b2b": "*B2B*.xlsx"
+    },
+
+    "flipkart_sheets": {
+        "b2c_intrastate": "Section 7(A)(2) in GSTR-1",
+        "b2c_interstate": "Section 7(B)(2) in GSTR-1",
+        "hsn": "Section 12 in GSTR-1",
+        "documents": "Section 13 in GSTR-1",
+        "eco": "Section 3 in GSTR-8"
+    },
+
+    "amazon_sheets": {
+        "b2c_small": "B2C Small",
+        "b2c_large": "B2C Large",
+        "b2b": "B2B",
+        "hsn": "HSN Summary",
+        "credit_notes": "B2B CN (cdnr)"
+    },
+
+    "meesho_sheets": {
+        "raw_data": "80307"
+    },
+
+    "einvoice_sheets": {
+        "b2b": "b2b, sez, de",
+        "credit_notes": "cdnr",
+        "hsn_b2b": "hsn(b2b)"
+    },
+
+    "meesho_columns": {
+        "hsn_code": "hsn_code",
+        "gst_rate": "gst_rate",
+        "taxable_value": "total_taxable_sale_value",
+        "tax_amount": "tax_amount",
+        "invoice_value": "total_invoice_value",
+        "taxable_shipping": "taxable_shipping",
+        "state": "end_customer_state_new",
+        "quantity": "quantity",
+        "gstin": "gstin",
+        "order_date": "order_date",
+        "order_number": "sub_order_num"
+    },
+
+    "empty_hsn_fill_map": {
+        "5": "90211000",
+        "18": "95069990"
+    },
+
+    "output_templates": {
+        "b2b": {
+            "filename": "b2b,sez,de",
+            "template_ref": "b2b,sez,de DEC.csv",
+            "columns": [
+                "GSTIN/UIN of Recipient",
+                "Receiver Name",
+                "Invoice Number",
+                "Invoice date",
+                "Invoice Value",
+                "Place Of Supply",
+                "Reverse Charge",
+                "Applicable % of Tax Rate",
+                "Invoice Type",
+                "E-Commerce GSTIN",
+                "Rate",
+                "Taxable Value",
+                "Cess Amount"
+            ]
+        },
+        "b2cs": {
+            "filename": "b2cs",
+            "template_ref": "b2cs.csv",
+            "columns": [
+                "Type",
+                "Place Of Supply",
+                "Rate",
+                "Applicable % of Tax Rate",
+                "Taxable Value",
+                "Cess Amount"
+            ]
+        },
+        "hsn_b2b": {
+            "filename": "hsn(b2b)",
+            "template_ref": "hsn(b2b).csv",
+            "columns": [
+                "HSN",
+                "Description",
+                "UQC",
+                "Total Quantity",
+                "Total Value",
+                "Taxable Value",
+                "Integrated Tax Amount",
+                "Central Tax Amount",
+                "State/UT Tax Amount",
+                "Cess Amount",
+                "Rate"
+            ]
+        },
+        "hsn_b2c": {
+            "filename": "hsn(b2c)",
+            "template_ref": "hsn(b2c).csv",
+            "columns": [
+                "HSN",
+                "Description",
+                "UQC",
+                "Total Quantity",
+                "Total Value",
+                "Taxable Value",
+                "Integrated Tax Amount",
+                "Central Tax Amount",
+                "State/UT Tax Amount",
+                "Cess Amount",
+                "Rate"
+            ]
+        },
+        "documents": {
+            "filename": "docs",
+            "template_ref": "docs.csv",
+            "columns": [
+                "Nature of Document",
+                "Sr. No. From",
+                "Sr. No. To",
+                "Total Number",
+                "Cancelled"
+            ]
+        },
+        "credit_notes": {
+            "filename": "cdnr1",
+            "template_ref": "cdnr1.csv",
+            "columns": [
+                "GSTIN/UIN of Recipient",
+                "Receiver Name",
+                "Note Number",
+                "Note Date",
+                "Note Type",
+                "Place Of Supply",
+                "Reverse Charge",
+                "Note Supply Type",
+                "Note Value",
+                "Applicable % of Tax Rate",
+                "Rate",
+                "Taxable Value",
+                "Cess Amount"
+            ]
+        },
+        "eco": {
+            "filename": "eco",
+            "template_ref": "eco.csv",
+            "columns": [
+                "Nature of Supply",
+                "GSTIN of E-Commerce Operator",
+                "E-Commerce Operator Name",
+                "Net value of supplies",
+                "Integrated tax",
+                "Central tax",
+                "State/UT tax",
+                "Cess"
+            ]
+        }
+    }
+}
