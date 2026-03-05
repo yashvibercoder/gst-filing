@@ -63,6 +63,12 @@ UQC_LONG_MAP = {
     "YDS": "YDS-YARDS",
 }
 
+def _normalize_hsn(code):
+    """Truncate HSN to 8 digits. Amazon appends a trailing 0, producing 9-digit codes."""
+    s = str(code).strip()
+    return s[:8] if len(s) > 8 else s
+
+
 # Template column order
 TEMPLATE_COLS = [
     "HSN", "Description", "UQC", "Total Quantity", "Total Value",
@@ -91,6 +97,7 @@ def map_einvoice_hsn_b2b(df):
         + df["Cess Amount"].fillna(0)
     )
     df = normalize_rate(df, "Rate")
+    df["HSN"] = df["HSN"].astype(str).apply(_normalize_hsn)
     return df[TEMPLATE_COLS]
 
 
@@ -102,6 +109,7 @@ def map_amazon_hsn(df):
         if col in df.columns:
             df = df.drop(columns=[col])
     df = normalize_rate(df, "Rate")
+    df["HSN"] = df["HSN"].astype(str).apply(_normalize_hsn)
     return df[TEMPLATE_COLS]
 
 
@@ -195,9 +203,9 @@ def subtract_b2b_from_total(total_hsn, einvoice_hsn_b2b):
     total = total_hsn.copy()
     b2b = einvoice_hsn_b2b.copy()
 
-    # Ensure HSN is string for matching
-    total["HSN"] = total["HSN"].astype(str).str.strip()
-    b2b["HSN"] = b2b["HSN"].astype(str).str.strip()
+    # Ensure HSN is string for matching, normalize to 8-digit standard
+    total["HSN"] = total["HSN"].astype(str).str.strip().apply(_normalize_hsn)
+    b2b["HSN"] = b2b["HSN"].astype(str).str.strip().apply(_normalize_hsn)
 
     numeric_cols = [
         "Total Quantity", "Total Value", "Taxable Value",
@@ -228,8 +236,174 @@ def subtract_b2b_from_total(total_hsn, einvoice_hsn_b2b):
     return merged[TEMPLATE_COLS]
 
 
+def _most_common_hsn(hsn_df, rate):
+    """Return the HSN code with the highest Taxable Value for the given rate."""
+    subset = hsn_df[hsn_df["Rate"] == rate]
+    if len(subset) == 0:
+        return "9999"
+    return subset.loc[subset["Taxable Value"].idxmax(), "HSN"]
+
+
+def _compute_tax_split(df, rate, state_code, taxable_diff, cess_diff):
+    """
+    Derive IGST / CGST / SGST for a correction row.
+    Uses the same IGST:CGST ratio as existing B2B rows at this rate.
+    df must have 'Place Of Supply' and 'Taxable Value' columns.
+    """
+    subset = df[df["Rate"] == rate].copy()
+    if len(subset) == 0 or taxable_diff == 0:
+        return 0.0, 0.0, 0.0
+
+    tv = pd.to_numeric(subset["Taxable Value"], errors="coerce").fillna(0)
+    is_inter = subset["Place Of Supply"].astype(str).str[:2] != state_code
+    igst_total = tv[is_inter].sum()
+    intra_total = tv[~is_inter].sum()
+    grand = igst_total + intra_total
+
+    if grand == 0:
+        igst_frac = 0.0
+    else:
+        igst_frac = igst_total / grand
+
+    igst_taxable = taxable_diff * igst_frac
+    intra_taxable = taxable_diff * (1 - igst_frac)
+
+    igst = round(igst_taxable * rate / 100, 2)
+    cgst = round(intra_taxable * rate / 200, 2)
+    sgst = round(intra_taxable * rate / 200, 2)
+    return igst, cgst, sgst
+
+
+def reconcile_hsn_with_b2b(hsn_b2b_df, b2b_df, state_code):
+    """
+    Compare HSN B2B totals vs B2B invoice totals (grouped by Rate).
+    Append one correction row per Rate where Taxable Value differs by > 0.01.
+    Returns (updated_df, corrections_made: int).
+    """
+    if b2b_df is None or len(b2b_df) == 0:
+        return hsn_b2b_df, 0
+
+    b2b_by_rate = (
+        b2b_df.groupby("Rate")
+        .agg(taxable=("Taxable Value", "sum"), cess=("Cess Amount", "sum"))
+        .reset_index()
+    )
+    hsn_by_rate = (
+        hsn_b2b_df.groupby("Rate")
+        .agg(taxable=("Taxable Value", "sum"), cess=("Cess Amount", "sum"))
+        .reset_index()
+    )
+
+    merged = b2b_by_rate.merge(hsn_by_rate, on="Rate", how="left",
+                                suffixes=("_b2b", "_hsn"))
+    merged["taxable_hsn"] = merged["taxable_hsn"].fillna(0)
+    merged["cess_hsn"] = merged["cess_hsn"].fillna(0)
+
+    corrections = 0
+    new_rows = []
+    for _, row in merged.iterrows():
+        diff_taxable = round(row["taxable_b2b"] - row["taxable_hsn"], 2)
+        diff_cess = round(row["cess_b2b"] - row["cess_hsn"], 2)
+        rate = row["Rate"]
+
+        if abs(diff_taxable) < 0.01 and abs(diff_cess) < 0.01:
+            continue
+
+        igst, cgst, sgst = _compute_tax_split(b2b_df, rate, state_code,
+                                               diff_taxable, diff_cess)
+        total_val = round(diff_taxable + igst + cgst + sgst + diff_cess, 2)
+        hsn_code = _most_common_hsn(hsn_b2b_df, rate)
+
+        new_rows.append({
+            "HSN": hsn_code,
+            "Description": "",
+            "UQC": "OTH-OTHERS",
+            "Total Quantity": 0,
+            "Total Value": total_val,
+            "Taxable Value": diff_taxable,
+            "Integrated Tax Amount": igst,
+            "Central Tax Amount": cgst,
+            "State/UT Tax Amount": sgst,
+            "Cess Amount": diff_cess,
+            "Rate": rate,
+        })
+        corrections += 1
+        print(f"      HSN B2B reconcile: Rate={rate}%, diff=₹{diff_taxable:,.2f} → correction row added (HSN {hsn_code})")
+
+    if new_rows:
+        hsn_b2b_df = pd.concat(
+            [hsn_b2b_df, pd.DataFrame(new_rows)], ignore_index=True
+        )
+    return hsn_b2b_df, corrections
+
+
+def reconcile_hsn_with_b2cs(hsn_b2c_df, b2cs_df, state_code):
+    """
+    Compare HSN B2C totals vs B2CS totals (grouped by Rate).
+    Append one correction row per Rate where Taxable Value differs by > 0.01.
+    B2CS has no IGST/CGST breakdown — derive from Place Of Supply vs state_code.
+    Returns (updated_df, corrections_made: int).
+    """
+    if b2cs_df is None or len(b2cs_df) == 0:
+        return hsn_b2c_df, 0
+
+    b2cs_by_rate = (
+        b2cs_df.groupby("Rate")
+        .agg(taxable=("Taxable Value", "sum"), cess=("Cess Amount", "sum"))
+        .reset_index()
+    )
+    hsn_by_rate = (
+        hsn_b2c_df.groupby("Rate")
+        .agg(taxable=("Taxable Value", "sum"), cess=("Cess Amount", "sum"))
+        .reset_index()
+    )
+
+    merged = b2cs_by_rate.merge(hsn_by_rate, on="Rate", how="left",
+                                 suffixes=("_b2cs", "_hsn"))
+    merged["taxable_hsn"] = merged["taxable_hsn"].fillna(0)
+    merged["cess_hsn"] = merged["cess_hsn"].fillna(0)
+
+    corrections = 0
+    new_rows = []
+    for _, row in merged.iterrows():
+        diff_taxable = round(row["taxable_b2cs"] - row["taxable_hsn"], 2)
+        diff_cess = round(row["cess_b2cs"] - row["cess_hsn"], 2)
+        rate = row["Rate"]
+
+        if abs(diff_taxable) < 0.01 and abs(diff_cess) < 0.01:
+            continue
+
+        igst, cgst, sgst = _compute_tax_split(b2cs_df, rate, state_code,
+                                               diff_taxable, diff_cess)
+        total_val = round(diff_taxable + igst + cgst + sgst + diff_cess, 2)
+        hsn_code = _most_common_hsn(hsn_b2c_df, rate)
+
+        new_rows.append({
+            "HSN": hsn_code,
+            "Description": "",
+            "UQC": "OTH-OTHERS",
+            "Total Quantity": 0,
+            "Total Value": total_val,
+            "Taxable Value": diff_taxable,
+            "Integrated Tax Amount": igst,
+            "Central Tax Amount": cgst,
+            "State/UT Tax Amount": sgst,
+            "Cess Amount": diff_cess,
+            "Rate": rate,
+        })
+        corrections += 1
+        print(f"      HSN B2C reconcile: Rate={rate}%, diff=₹{diff_taxable:,.2f} → correction row added (HSN {hsn_code})")
+
+    if new_rows:
+        hsn_b2c_df = pd.concat(
+            [hsn_b2c_df, pd.DataFrame(new_rows)], ignore_index=True
+        )
+    return hsn_b2c_df, corrections
+
+
 def generate_hsn_files(einvoice_data, amazon_hsn, flipkart_hsn, meesho_raw,
-                       states_dict, folders, config):
+                       states_dict, folders, config,
+                       b2b_by_state=None, b2cs_by_state=None):
     """
     Generate HSN B2B and HSN B2C files for each state.
     einvoice_data: dict keyed by state code {"07": {"hsn_b2b": df, ...}, ...}
@@ -280,6 +454,12 @@ def generate_hsn_files(einvoice_data, amazon_hsn, flipkart_hsn, meesho_raw,
                 lambda x: UQC_LONG_MAP.get(str(x).strip().upper(), x) if pd.notna(x) and str(x).strip() else x
             )
 
+            # Reconcile HSN B2B totals against B2B invoice totals
+            if b2b_by_state and code in b2b_by_state:
+                hsn_b2b, n_corr = reconcile_hsn_with_b2b(
+                    hsn_b2b, b2b_by_state[code], code
+                )
+
             # Write HSN B2B
             b2b_path = folder / "hsn(b2b).csv"
             hsn_b2b.to_csv(b2b_path, index=False)
@@ -296,6 +476,12 @@ def generate_hsn_files(einvoice_data, amazon_hsn, flipkart_hsn, meesho_raw,
             hsn_b2c["UQC"] = hsn_b2c["UQC"].map(
                 lambda x: UQC_LONG_MAP.get(str(x).strip().upper(), x) if pd.notna(x) and str(x).strip() else x
             )
+
+            # Reconcile HSN B2C totals against B2CS totals
+            if b2cs_by_state and code in b2cs_by_state:
+                hsn_b2c, n_corr = reconcile_hsn_with_b2cs(
+                    hsn_b2c, b2cs_by_state[code], code
+                )
 
             b2c_path = folder / "hsn(b2c).csv"
             hsn_b2c.to_csv(b2c_path, index=False)

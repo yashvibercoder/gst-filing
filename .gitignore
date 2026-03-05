@@ -53,3 +53,11 @@ logs/
 
 # Temp
 nul
+*.bak
+
+# Test / local input folders
+PB_input/
+
+# Local planning files
+PROJECT_PLAN.md
+skills.md

@@ -133,7 +133,7 @@ def generate_creditnotes_files(amazon_data, einvoice_data, states_dict, folders)
             "Receiver Name", key=lambda s: s.fillna("").str.len(),
             ascending=False
         )
-        result = result.drop_duplicates(subset=["Note Number"], keep="first")
+        result = result.drop_duplicates(subset=["Note Number", "Rate"], keep="first")
         result = result.reset_index(drop=True)
 
         out_path = folder / "cdnr1.csv"

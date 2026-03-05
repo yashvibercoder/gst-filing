@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
-import { Upload as UploadIcon, Trash2, Play, CheckCircle, XCircle, Loader } from "lucide-react";
+import { Upload as UploadIcon, Trash2, Play, CheckCircle, XCircle, Loader, Info } from "lucide-react";
 import {
-  listUploads, uploadFile, deleteUpload, runProcessing,
-  type UploadRecord, type SessionRecord,
+  listUploads, uploadFile, deleteUpload, updateUploadPlatform, runProcessing, listGSTINs,
+  type UploadRecord, type SessionRecord, type GSTINRecord,
 } from "../lib/api";
+
+const PLATFORMS = ["amazon", "flipkart", "meesho", "einvoice"] as const;
 
 const MONTH_NAMES = [
   "", "January", "February", "March", "April", "May", "June",
@@ -17,6 +19,7 @@ export default function UploadPage() {
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<SessionRecord | null>(null);
   const [error, setError] = useState("");
+  const [gstins, setGstins] = useState<GSTINRecord[]>([]);
 
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -24,7 +27,13 @@ export default function UploadPage() {
 
   const reload = () => listUploads().then(setUploads).catch(() => {});
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+    listGSTINs().then(setGstins).catch(() => {});
+  }, []);
+
+  const activeGstins = gstins.filter((g) => g.is_active);
+  const inactiveGstins = gstins.filter((g) => !g.is_active);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
@@ -50,6 +59,11 @@ export default function UploadPage() {
 
   const handleDelete = async (u: UploadRecord) => {
     await deleteUpload(u.id);
+    reload();
+  };
+
+  const handleSetPlatform = async (id: number, platform: string) => {
+    await updateUploadPlatform(id, platform);
     reload();
   };
 
@@ -129,7 +143,16 @@ export default function UploadPage() {
                         {u.platform}
                       </span>
                     ) : (
-                      <span className="text-gray-400 text-xs">unknown</span>
+                      <select
+                        defaultValue=""
+                        onChange={(e) => { if (e.target.value) handleSetPlatform(u.id, e.target.value); }}
+                        className="text-xs border border-amber-300 rounded px-1.5 py-0.5 bg-amber-50 text-amber-800 cursor-pointer focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      >
+                        <option value="" disabled>tag platform…</option>
+                        {PLATFORMS.map((p) => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right text-gray-500">
@@ -144,6 +167,34 @@ export default function UploadPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Active states info */}
+      {gstins.length > 0 && (
+        <div className={`rounded-lg p-3 mb-6 flex items-start gap-2 text-sm ${
+          activeGstins.length > 0 ? "bg-blue-50 text-blue-800" : "bg-amber-50 text-amber-800"
+        }`}>
+          <Info size={16} className="mt-0.5 shrink-0" />
+          <div>
+            {activeGstins.length > 0 ? (
+              <>
+                <span className="font-medium">Selective processing:</span>{" "}
+                {activeGstins.length} active state{activeGstins.length !== 1 ? "s" : ""} will be processed
+                ({activeGstins.map((g) => `${g.state_code}-${g.state_name}`).join(", ")})
+                {inactiveGstins.length > 0 && (
+                  <span className="text-blue-600">
+                    {" "}| {inactiveGstins.length} inactive (skipped)
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="font-medium">All GSTINs inactive.</span>{" "}
+                No states will be processed. Activate at least one GSTIN in the management tab.
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -168,7 +219,7 @@ export default function UploadPage() {
           />
           <button
             onClick={handleProcess}
-            disabled={processing}
+            disabled={processing || (gstins.length > 0 && activeGstins.length === 0)}
             className="px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
           >
             {processing ? <Loader size={16} className="animate-spin" /> : <Play size={16} />}

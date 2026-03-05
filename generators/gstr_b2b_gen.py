@@ -129,8 +129,13 @@ def generate_b2b_files(amazon_data, einvoice_data, states_dict, folders):
             "Receiver Name", key=lambda s: s.fillna("").str.len(),
             ascending=False
         )
-        result = result.drop_duplicates(subset=["Invoice Number"], keep="first")
+        result = result.drop_duplicates(subset=["Invoice Number", "Rate"], keep="first")
         result = result.reset_index(drop=True)
+
+        # Round numeric columns to 2dp (source data can have floating point noise)
+        for col in ["Invoice Value", "Taxable Value", "Cess Amount"]:
+            if col in result.columns:
+                result[col] = pd.to_numeric(result[col], errors="coerce").round(2)
 
         b2b_by_state[code] = result
 

@@ -1,6 +1,6 @@
 """Filing session database model."""
 
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -10,6 +10,7 @@ class FilingSession(Base):
     __tablename__ = "filing_sessions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     month = Column(Integer, nullable=False)
     year = Column(Integer, nullable=False)
     status = Column(String(20), default="pending")  # pending/processing/completed/failed

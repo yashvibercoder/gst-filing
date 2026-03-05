@@ -31,6 +31,7 @@ from generators.gstr_b2cs_gen import generate_b2cs_files
 from generators.creditnotes_gen import generate_creditnotes_files
 from generators.documents_gen import generate_documents_files
 from generators.eco_gen import generate_eco_files
+from generators.json_converter import generate_all_json
 from validators.output_validator import run_validation
 
 
@@ -148,25 +149,27 @@ def main():
     print("PHASE 6: TEMPLATE GENERATION")
     print("=" * 60)
 
-    # 1. HSN B2B + B2C
+    # 1. B2B (Amazon + E-Invoice) — must run before HSN for reconciliation
+    print("\n  --- B2B Templates ---")
+    b2b_by_state = generate_b2b_files(amazon_data, einvoice_data, states_dict, folders)
+
+    # 2. B2CS (Flipkart + Amazon + Meesho) — must run before HSN for reconciliation
+    print("\n  --- B2CS Templates ---")
+    b2cs_by_state = generate_b2cs_files(
+        flipkart_data, amazon_data, meesho_data,
+        states_dict, folders, config
+    )
+
+    # 3. HSN B2B + B2C (reconciled against B2B and B2CS totals)
     print("\n  --- HSN Templates ---")
     generate_hsn_files(
         einvoice_data,
         amazon_data.get("hsn"),
         flipkart_data.get("hsn"),
         meesho_data.get("raw"),
-        states_dict, folders, config
-    )
-
-    # 2. B2B (Amazon + E-Invoice)
-    print("\n  --- B2B Templates ---")
-    b2b_by_state = generate_b2b_files(amazon_data, einvoice_data, states_dict, folders)
-
-    # 3. B2CS (Flipkart + Amazon + Meesho)
-    print("\n  --- B2CS Templates ---")
-    generate_b2cs_files(
-        flipkart_data, amazon_data, meesho_data,
-        states_dict, folders, config
+        states_dict, folders, config,
+        b2b_by_state=b2b_by_state,
+        b2cs_by_state=b2cs_by_state,
     )
 
     # 4. Credit Notes (Amazon + E-Invoice)
@@ -181,7 +184,15 @@ def main():
     print("\n  --- ECO Templates ---")
     generate_eco_files(flipkart_data, states_dict, folders)
 
-    # ── Phase 7: Validation ─────────────────────────────────────
+    # ── Phase 7: JSON Generation ─────────────────────────────────
+    print("\n" + "=" * 60)
+    print("PHASE 7: JSON GENERATION")
+    print("=" * 60)
+
+    json_count = generate_all_json(folders, states_dict, config)
+    print(f"\n  Generated {json_count} gstr1.json files")
+
+    # ── Phase 8: Validation ─────────────────────────────────────
     counts = run_validation(
         folders, states_dict, amazon_data, einvoice_data, config, output_root
     )

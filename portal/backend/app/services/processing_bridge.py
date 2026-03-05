@@ -8,10 +8,14 @@ from pathlib import Path
 from ..config import settings
 
 
-def run_pipeline() -> dict:
+def run_pipeline(month: int = 1, year: int = 2026, session_id: int | None = None, active_states: list[str] | None = None, amazon_seller_id: str | None = None, company_slug: str = "default") -> dict:
     """
     Run the GST pipeline using System A modules.
     Returns dict with output_dir, states_count, files_count, validation summary.
+
+    Multi-month: output goes to output/{MM}_{YYYY}/ when month/year specified.
+    Session uploads: looks in uploads/{session_id}/ first, falls back to Input files/.
+    active_states: if provided, only process these state codes (from active GSTINs).
     """
     project_root = settings.project_root
 
@@ -37,13 +41,28 @@ def run_pipeline() -> dict:
     from generators.creditnotes_gen import generate_creditnotes_files
     from generators.documents_gen import generate_documents_files
     from generators.eco_gen import generate_eco_files
+    from generators.json_converter import generate_all_json
     from validators.output_validator import run_validation
 
-    output_root = project_root / "output"
+    # Multi-month output directory
+    output_root = project_root / "output" / company_slug / f"{month:02d}_{year}"
+    output_root.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: File Discovery
     config = load_config(project_root)
-    discovered = discover_files(config, project_root)
+
+    # Override Amazon file pattern if a company-specific seller ID is provided
+    if amazon_seller_id:
+        config["file_patterns"]["amazon"] = f"*{amazon_seller_id}*.xlsx"
+        print(f"  Company override: amazon pattern = *{amazon_seller_id}*.xlsx")
+
+    # Use portal upload_dir if any xlsx files exist there, otherwise fall back to Input files/
+    input_override = None
+    upload_dir = Path(settings.upload_dir)
+    if upload_dir.exists() and any(upload_dir.glob("*.xlsx")):
+        input_override = str(upload_dir)
+
+    discovered = discover_files(config, project_root, input_override=input_override)
 
     # Phase 2: Data Loading
     flipkart_data = {}
@@ -94,6 +113,14 @@ def run_pipeline() -> dict:
         discovered.get("einvoice", [])
     )
 
+    # Filter to active states only (when GSTINs are registered in portal)
+    if active_states is not None:
+        skipped = [c for c in states_dict if c not in active_states]
+        states_dict = {c: v for c, v in states_dict.items() if c in active_states}
+        if skipped:
+            print(f"  Selective processing: skipped {len(skipped)} inactive states ({', '.join(skipped)})")
+        print(f"  Processing {len(states_dict)} active states")
+
     # Phase 5: Output Structure
     folders = create_state_folders(states_dict, output_root)
 
@@ -108,12 +135,15 @@ def run_pipeline() -> dict:
     generate_documents_files(flipkart_data, b2b_by_state, states_dict, folders)
     generate_eco_files(flipkart_data, states_dict, folders)
 
-    # Phase 7: Validation
+    # Phase 7: JSON Generation
+    generate_all_json(folders, states_dict, config)
+
+    # Phase 8: Validation
     counts = run_validation(folders, states_dict, amazon_data, einvoice_data, config, output_root)
 
     # Count total output files
     total_files = sum(
-        len(list(folder.glob("*.csv")))
+        len(list(folder.glob("*.csv"))) + len(list(folder.glob("*.json")))
         for folder in folders.values()
     )
 

@@ -24,7 +24,7 @@ def load_config(project_root=None):
         return json.load(f)
 
 
-def discover_files(config=None, project_root=None):
+def discover_files(config=None, project_root=None, input_override=None):
     """
     Scan the input folder and match files to platforms using glob patterns.
 
@@ -44,7 +44,7 @@ def discover_files(config=None, project_root=None):
     if config is None:
         config = load_config(project_root)
 
-    input_folder = project_root / config["paths"]["input_folder"]
+    input_folder = Path(input_override) if input_override else project_root / config["paths"]["input_folder"]
 
     if not input_folder.exists():
         print(f"  ERROR: Input folder not found: {input_folder}")

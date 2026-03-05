@@ -105,7 +105,9 @@ def check_duplicates(df, key_col, name):
     if key_col not in df.columns:
         return {"status": "SKIP", "detail": f"No '{key_col}' column", "duplicates": []}
 
-    dupes = df[df.duplicated(subset=[key_col], keep=False)]
+    # Include Rate in duplicate key — same invoice/note at different rates is valid (multi-rate)
+    dupe_subset = [key_col, "Rate"] if "Rate" in df.columns else [key_col]
+    dupes = df[df.duplicated(subset=dupe_subset, keep=False)]
     if len(dupes) == 0:
         return {"status": "PASS", "detail": "No duplicates", "duplicates": []}
 

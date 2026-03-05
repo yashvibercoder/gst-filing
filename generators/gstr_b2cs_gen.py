@@ -145,6 +145,7 @@ def generate_b2cs_files(flipkart_data, amazon_data, meesho_data,
     """
     Generate b2cs.csv for each seller state.
     Combines Flipkart B2C + Amazon B2C + Meesho B2C, aggregated by (PoS, Rate).
+    Returns b2cs_by_state: {state_code: DataFrame} for HSN reconciliation.
     """
     fk_intra = flipkart_data.get("b2c_intra")
     fk_inter = flipkart_data.get("b2c_inter")
@@ -152,6 +153,7 @@ def generate_b2cs_files(flipkart_data, amazon_data, meesho_data,
     amz_b2c_large = amazon_data.get("b2c_large")
     meesho_raw = meesho_data.get("raw") if meesho_data else None
     meesho_gstin = "07IFWPS9148C1ZK"
+    b2cs_by_state = {}
 
     for code, info in sorted(states_dict.items()):
         gstin = info["gstin"]
@@ -222,6 +224,10 @@ def generate_b2cs_files(flipkart_data, amazon_data, meesho_data,
         if len(result) == 0:
             continue
 
+        b2cs_by_state[code] = result
+
         out_path = folder / "b2cs.csv"
         result.to_csv(out_path, index=False)
         print(f"  {code}-{info['name']}: b2cs.csv = {len(result)} rows")
+
+    return b2cs_by_state

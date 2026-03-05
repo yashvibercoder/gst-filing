@@ -6,6 +6,8 @@ import re
 
 class GSTINCreate(BaseModel):
     gstin: str
+    portal_username: str | None = None
+    portal_password: str | None = None
 
     @field_validator("gstin")
     @classmethod
@@ -23,6 +25,8 @@ class GSTINResponse(BaseModel):
     gstin: str
     state_code: str
     state_name: str
+    portal_username: str | None = None
+    portal_password: str | None = None
     is_active: bool
 
     class Config:
@@ -31,3 +35,5 @@ class GSTINResponse(BaseModel):
 
 class GSTINUpdate(BaseModel):
     is_active: bool | None = None
+    portal_username: str | None = None
+    portal_password: str | None = None

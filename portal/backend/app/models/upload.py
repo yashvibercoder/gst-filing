@@ -10,6 +10,7 @@ class UploadLog(Base):
     __tablename__ = "upload_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     session_id = Column(Integer, ForeignKey("filing_sessions.id"), nullable=True)
     original_filename = Column(String(255), nullable=False)
     stored_filename = Column(String(255), nullable=False)

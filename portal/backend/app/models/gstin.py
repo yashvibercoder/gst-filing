@@ -1,6 +1,6 @@
 """GSTIN database model."""
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -26,9 +26,12 @@ class GSTIN(Base):
     __tablename__ = "gstins"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     gstin = Column(String(15), unique=True, nullable=False)
     state_code = Column(String(2), nullable=False)
     state_name = Column(String(50), nullable=False)
+    portal_username = Column(String(100), nullable=True)
+    portal_password = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
 

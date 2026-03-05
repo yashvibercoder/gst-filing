@@ -438,4 +438,12 @@ def run_validation(folders, states_dict, amazon_data, einvoice_data, config, out
     summary_df.to_csv(report_path, index=False)
     print(f"  Report: {report_path}")
 
+    # Write structured check results for the portal validation view
+    import csv as _csv
+    checks_path = Path(output_root) / "validation_checks.csv"
+    with open(checks_path, "w", newline="", encoding="utf-8") as f:
+        writer = _csv.DictWriter(f, fieldnames=["check", "state", "file", "status", "detail"])
+        writer.writeheader()
+        writer.writerows(all_results)
+
     return {"pass": pass_count, "fail": fail_count, "warn": warn_count}
