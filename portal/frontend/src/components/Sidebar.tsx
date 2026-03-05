@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -21,8 +21,8 @@ const links = [
   { to: "/upload", label: "Upload", icon: Upload },
   { to: "/review", label: "Review", icon: Eye },
   { to: "/audit", label: "Audit", icon: ClipboardCheck },
-  { to: "/history", label: "History", icon: History, disabled: true },
-  { to: "/settings", label: "Settings", icon: Settings, disabled: true },
+  { to: "/history", label: "History", icon: History },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function Sidebar() {
@@ -52,7 +52,7 @@ export default function Sidebar() {
         </div>
       </div>
       <nav className="flex-1 p-2 space-y-1">
-        {links.map(({ to, label, icon: Icon, disabled }) => (
+        {links.map(({ to, label, icon: Icon, disabled = false }: { to: string; label: string; icon: React.ElementType; disabled?: boolean }) => (
           <NavLink
             key={to}
             to={disabled ? "#" : to}

@@ -6,6 +6,8 @@ import UploadPage from "./pages/Upload";
 import Review from "./pages/Review";
 import Audit from "./pages/Audit";
 import Companies from "./pages/Companies";
+import History from "./pages/History";
+import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 
 function RequireCompany({ children }: { children: React.ReactNode }) {
@@ -36,6 +38,8 @@ export default function App() {
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/review" element={<Review />} />
           <Route path="/audit" element={<Audit />} />
+          <Route path="/history" element={<History />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
     </BrowserRouter>
