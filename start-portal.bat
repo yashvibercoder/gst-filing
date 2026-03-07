@@ -1,10 +1,5 @@
 @echo off
 title GST Filing - Portal
-echo ============================================
-echo  GST Filing - Starting Portal
-echo ============================================
-echo.
-
 cd /d "%~dp0"
 
 :: Kill any old process on port 8000
@@ -13,18 +8,18 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING 2^
 )
 timeout /t 1 /nobreak >nul
 
-:: Start backend using system python
-echo Starting backend...
-start "GST Filing Backend" cmd /k "cd /d "%~dp0" && python -m uvicorn portal.backend.app.main:app --port 8000"
-timeout /t 4 /nobreak >nul
+:: Use venv python if it exists, otherwise use system python
+if exist "portal\backend\venv\Scripts\python.exe" (
+    set PYTHON="%~dp0portal\backend\venv\Scripts\python.exe"
+) else (
+    set PYTHON=python
+)
 
-:: Open browser
+echo Starting GST Filing Portal...
+start "GST Filing Backend" cmd /k "cd /d "%~dp0" && %PYTHON% -m uvicorn portal.backend.app.main:app --port 8000"
+timeout /t 4 /nobreak >nul
 start http://localhost:8000
 
-echo.
-echo ============================================
-echo  Portal running at http://localhost:8000
-echo  Keep this window open while using the app.
-echo  Close it when done.
-echo ============================================
+echo Portal running at http://localhost:8000
+echo Close this window when done.
 pause

@@ -59,9 +59,17 @@ def run_audit(state_code: str = "07"):
     output_root = settings.project_root / "output"
     state_folder = None
 
+    # Collect month dirs from: output/MM_YYYY/ AND output/{company}/{MM_YYYY}/
+    raw_month_dirs = [d for d in output_root.iterdir() if d.is_dir() and re.match(r'^\d{2}_\d{4}$', d.name)]
+    for company_dir in output_root.iterdir():
+        if company_dir.is_dir() and not re.match(r'^\d{2}_\d{4}$', company_dir.name):
+            for sub in company_dir.iterdir():
+                if sub.is_dir() and re.match(r'^\d{2}_\d{4}$', sub.name):
+                    raw_month_dirs.append(sub)
+
     month_dirs = sorted(
-        [d for d in output_root.iterdir() if d.is_dir() and re.match(r'^\d{2}_\d{4}$', d.name)],
-        key=lambda d: (int(d.name[3:]), int(d.name[:2])),  # sort by YYYY then MM
+        raw_month_dirs,
+        key=lambda d: (int(d.name[3:]), int(d.name[:2])),
         reverse=True
     )
     search_dirs = month_dirs + [output_root]

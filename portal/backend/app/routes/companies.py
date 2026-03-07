@@ -1,11 +1,18 @@
 """Company profile endpoints."""
 
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.company import Company
 from ..schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
+
+
+def _make_slug(name: str) -> str:
+    s = name.lower().strip()
+    s = re.sub(r'[^a-z0-9]+', '-', s)
+    return s.strip('-') or "company"
 
 router = APIRouter(prefix="/api/companies", tags=["Companies"])
 
@@ -22,7 +29,7 @@ def get_active_company(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=CompanyResponse)
 def create_company(data: CompanyCreate, db: Session = Depends(get_db)):
-    company = Company(name=data.name, amazon_seller_id=data.amazon_seller_id)
+    company = Company(name=data.name, amazon_seller_id=data.amazon_seller_id, slug=_make_slug(data.name))
     # Auto-activate if it's the first company
     if db.query(Company).count() == 0:
         company.is_active = True
@@ -39,6 +46,7 @@ def update_company(company_id: int, data: CompanyUpdate, db: Session = Depends(g
         raise HTTPException(404, "Company not found")
     if data.name is not None:
         company.name = data.name
+        company.slug = _make_slug(data.name)
     if data.amazon_seller_id is not None:
         company.amazon_seller_id = data.amazon_seller_id
     db.commit()
