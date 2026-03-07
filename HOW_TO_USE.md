@@ -14,13 +14,16 @@ Open it in any browser — no internet needed after setup.
 
 Git is needed to download the software.
 
-1. Open **PowerShell** (search for it in the Start menu)
+> ⚠️ **Important:** Use **PowerShell**, NOT Command Prompt.
+> Right-click the Start button → click **"Windows PowerShell"** or **"Terminal"**
+
+1. Open **PowerShell** (right-click Start → Windows PowerShell)
 2. Paste this and press Enter:
    ```
-   winget install --id Git.Git -e
+   winget install --id Git.Git -e --accept-source-agreements
    ```
 3. Wait for it to finish
-4. **Close PowerShell and open it again** (important!)
+4. **Close PowerShell and open it again** (important — Git won't work until you do this)
 
 ---
 
@@ -93,6 +96,7 @@ Every time you want to use the app:
 | Port already in use error | Restart your PC and try again |
 | `git` not found | Restart PowerShell after installing Git |
 | `python` not found | Restart PowerShell after installing Python |
+| `Adjoined flag alias not found` error | You are using Command Prompt — switch to **PowerShell** instead |
 
 ---
 
