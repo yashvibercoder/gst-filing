@@ -7,14 +7,25 @@ echo.
 
 cd /d "%~dp0"
 
-echo Starting backend on http://localhost:8000 ...
-start "GST Filing Backend" cmd /k "portal\backend\venv\Scripts\python -m uvicorn portal.backend.app.main:app --port 8000"
+:: Kill any old process on port 8000
+echo Stopping any existing server on port 8000...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING 2^>nul') do (
+    taskkill /PID %%a /F >nul 2>&1
+)
+timeout /t 1 /nobreak >nul
 
-timeout /t 3 /nobreak >nul
+:: Start backend
+echo Starting backend...
+start "GST Filing Backend" cmd /k "cd /d "%~dp0" && portal\backend\venv\Scripts\python -m uvicorn portal.backend.app.main:app --port 8000"
+timeout /t 4 /nobreak >nul
 
+:: Open browser
 start http://localhost:8000
 
-echo Portal is running at http://localhost:8000
-echo Keep this window open. Close it when done.
 echo.
+echo ============================================
+echo  Portal running at http://localhost:8000
+echo  Keep this window open while using the app.
+echo  Close it when done.
+echo ============================================
 pause
