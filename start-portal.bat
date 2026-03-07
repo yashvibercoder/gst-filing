@@ -8,15 +8,14 @@ echo.
 cd /d "%~dp0"
 
 :: Kill any old process on port 8000
-echo Stopping any existing server on port 8000...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING 2^>nul') do (
     taskkill /PID %%a /F >nul 2>&1
 )
 timeout /t 1 /nobreak >nul
 
-:: Start backend
+:: Start backend using system python
 echo Starting backend...
-start "GST Filing Backend" cmd /k "cd /d "%~dp0" && portal\backend\venv\Scripts\python -m uvicorn portal.backend.app.main:app --port 8000"
+start "GST Filing Backend" cmd /k "cd /d "%~dp0" && python -m uvicorn portal.backend.app.main:app --port 8000"
 timeout /t 4 /nobreak >nul
 
 :: Open browser
